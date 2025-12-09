@@ -1,0 +1,240 @@
+
+import gzip
+import shutil
+import pandas as pd
+import os
+import requests
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+class ManejadorDatosNYC:
+    """
+    Clase para descargar y gestionar los datos de taxis de NYC.
+
+    Esta clase encapsula toda la lógica para obtener el dataset de taxis de NYC,
+    desde la descarga y descompresión hasta la carga en un DataFrame de pandas.
+    Está diseñada para ser eficiente, robusta y fácil de usar.
+    """
+    # URL pública y confiable para el dataset de Enero 2021.
+    DATA_URL = "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/yellow_tripdata_2021-01.csv.gz"
+
+    # Construcción de la ruta de datos de forma dinámica para que funcione en cualquier sistema.
+    DATA_DIR = os.path.join(os.getcwd(), "ejercicios_bigdata", "datos")
+
+    def __init__(self):
+        """
+        Constructor de la clase.
+        Define las rutas completas a los archivos con los que trabajará la clase.
+        """
+        self.ruta_csv = os.path.join(self.DATA_DIR, "nyc_taxi.csv")
+        self.ruta_gz = os.path.join(self.DATA_DIR, "nyc_taxi.csv.gz")
+
+    def _asegurar_directorio(self):
+        """
+        Método auxiliar privado para garantizar que el directorio de destino exista.
+        Si no existe, lo crea.
+        """
+        os.makedirs(self.DATA_DIR, exist_ok=True)
+
+    def descargar_y_descomprimir(self):
+        """
+        Descarga el archivo .csv.gz, lo descomprime a .csv y limpia el archivo comprimido.
+
+        Este método es idempotente: si el archivo final ya existe, no realiza ninguna acción.
+        Maneja errores de red y de sistema de archivos de forma segura.
+        """
+        self._asegurar_directorio()
+
+        if os.path.exists(self.ruta_csv):
+            print(f"✅ El archivo ya existe en: {self.ruta_csv}")
+            return
+
+        print(f"⬇️ Descargando datos comprimidos desde: {self.DATA_URL}")
+        print("Esto puede tardar un poco (aprox. 25 MB)...")
+
+        try:
+            respuesta = requests.get(self.DATA_URL, stream=True)
+            respuesta.raise_for_status()
+
+            with open(self.ruta_gz, "wb") as f:
+                for trozo in respuesta.iter_content(chunk_size=8192):
+                    f.write(trozo)
+            print("✅ Descarga completada.")
+
+            print("📦 Descomprimiendo archivo GZIP...")
+            with gzip.open(self.ruta_gz, 'rb') as f_in:
+                with open(self.ruta_csv, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+
+            print(f"✅ Archivo descomprimido listo: {self.ruta_csv}")
+
+            os.remove(self.ruta_gz)
+            print("🧹 Archivo temporal .gz eliminado.")
+
+        except Exception as e:
+            print(f"❌ Error durante la descarga o descompresión: {e}")
+            if os.path.exists(self.ruta_gz):
+                os.remove(self.ruta_gz)
+
+    def cargar_datos(self) -> pd.DataFrame:
+        """
+        Carga los datos desde el archivo CSV a un DataFrame de pandas.
+        """
+        if not os.path.exists(self.ruta_csv):
+            print("El archivo CSV no se encuentra. Intentando descargarlo ahora...")
+            self.descargar_y_descomprimir()
+
+        if os.path.exists(self.ruta_csv):
+            print(f"Cargando datos desde: {self.ruta_csv}")
+            return pd.read_csv(self.ruta_csv)
+        else:
+            print("❌ No se pudieron cargar los datos. La descarga pudo haber fallado.")
+            return pd.DataFrame()
+
+
+class AnalizadorDatosNYC:
+    """
+    Clase para realizar análisis sobre el DataFrame de taxis de NYC.
+    """
+    def __init__(self, dataframe: pd.DataFrame):
+        self.df = dataframe
+        # Filtrar valores atípicos para una mejor visualización de los gráficos
+        self.df_filtrado = self.df[
+            (self.df['trip_distance'] > 0) & (self.df['trip_distance'] < 50) &
+            (self.df['fare_amount'] > 0) & (self.df['fare_amount'] < 200)
+        ]
+
+    def mostrar_total_viajes(self):
+        total_trips = len(self.df)
+        print(f"Total de viajes: {total_trips}")
+
+    def mostrar_distancia_promedio(self):
+        average_distance = self.df['trip_distance'].mean()
+        print(f"Distancia promedio de los viajes: {average_distance:.2f} millas")
+
+    def mostrar_tarifa_promedio(self):
+        average_fare = self.df['fare_amount'].mean()
+        print(f"Tarifa promedio de los viajes: ${average_fare:.2f}")
+
+    def mostrar_pasajeros_frecuentes(self):
+        passenger_counts = self.df['passenger_count'].value_counts(dropna=False)
+        print("Recuento de pasajeros por viaje:")
+        print(passenger_counts)
+
+        most_frequent_passenger = passenger_counts.idxmax()
+        most_frequent_count = passenger_counts.max()
+        print(f"\nEl número de pasajeros más frecuente es {most_frequent_passenger} con {most_frequent_count} viajes.")
+
+        passenger_counts_valid = self.df['passenger_count'].dropna().value_counts()
+        if not passenger_counts_valid.empty:
+            least_frequent_passenger = passenger_counts_valid.idxmin()
+            least_frequent_count = passenger_counts_valid.min()
+            print(f"El número de pasajeros menos frecuente es {least_frequent_passenger} con {least_frequent_count} viajes.")
+        else:
+            print("No hay recuentos de pasajeros válidos para determinar el menos frecuente.")
+
+    def mostrar_valores_nulos(self):
+        null_values = self.df.isnull().sum()
+        print("Conteo de valores nulos por columna:")
+        print(null_values[null_values > 0])
+
+        if (null_values == 0).all():
+            print("No hay valores nulos en el DataFrame.")
+
+    def grafico_distribucion_distancias(self):
+        """Gráfico 1: Muestra la distribución de las distancias de viaje."""
+        print("Generando Gráfico 1: Distribución de distancias...")
+        plt.figure(figsize=(10, 6))
+        sns.histplot(self.df_filtrado['trip_distance'], bins=50, kde=True)
+        plt.title('Gráfico 1: Distribución de Distancias de Viaje')
+        plt.xlabel('Distancia (millas)')
+        plt.ylabel('Frecuencia')
+        plt.grid(True)
+        plt.show()
+
+    def grafico_distribucion_tarifas(self):
+        """Gráfico 2: Muestra la distribución de las tarifas de viaje."""
+        print("Generando Gráfico 2: Distribución de tarifas...")
+        plt.figure(figsize=(10, 6))
+        sns.histplot(self.df_filtrado['fare_amount'], bins=50, kde=True)
+        plt.title('Gráfico 2: Distribución de Tarifas de Viaje')
+        plt.xlabel('Tarifa ($)')
+        plt.ylabel('Frecuencia')
+        plt.grid(True)
+        plt.show()
+
+    def grafico_pasajeros_por_viaje(self):
+        """Gráfico 3: Muestra un gráfico de barras del número de pasajeros por viaje."""
+        print("Generando Gráfico 3: Pasajeros por viaje...")
+        plt.figure(figsize=(10, 6))
+        sns.countplot(x='passenger_count', data=self.df)
+        plt.title('Gráfico 3: Conteo de Pasajeros por Viaje')
+        plt.xlabel('Número de Pasajeros')
+        plt.ylabel('Cantidad de Viajes')
+        plt.grid(axis='y')
+        plt.show()
+
+    def mostrar_menu_graficos(self):
+        """Muestra un submenú para la visualización de gráficos."""
+        while True:
+            print("\n--- Menú de Gráficos ---")
+            print("1. Gráfico 1: Distribución de distancias")
+            print("2. Gráfico 2: Distribución de tarifas")
+            print("3. Gráfico 3: Pasajeros por viaje")
+            print("0. Volver al menú principal")
+            opcion = input("Selecciona un gráfico para ver: ")
+
+            if opcion == '1':
+                self.grafico_distribucion_distancias()
+            elif opcion == '2':
+                self.grafico_distribucion_tarifas()
+            elif opcion == '3':
+                self.grafico_pasajeros_por_viaje()
+            elif opcion == '0':
+                break
+            else:
+                print("Opción no válida. Por favor, intenta de nuevo.")
+
+    def mostrar_menu(self):
+        while True:
+            print("\n--- Opciones de Análisis ---")
+            print("1. Total de viajes")
+            print("2. Distancia promedio")
+            print("3. Tarifa promedio")
+            print("4. Pasajeros frecuentes")
+            print("5. Valores nulos por columna")
+            print("6. Ver gráficos")
+            print("0. Salir")
+            opcion = input("Selecciona una opción: ")
+
+            if opcion == '1':
+                self.mostrar_total_viajes()
+            elif opcion == '2':
+                self.mostrar_distancia_promedio()
+            elif opcion == '3':
+                self.mostrar_tarifa_promedio()
+            elif opcion == '4':
+                self.mostrar_pasajeros_frecuentes()
+            elif opcion == '5':
+                self.mostrar_valores_nulos()
+            elif opcion == '6':
+                self.mostrar_menu_graficos()
+            elif opcion == '0':
+                print("Saliendo del análisis.")
+                break
+            else:
+                print("Opción no válida. Por favor, intenta de nuevo.")
+
+# --- Bloque de Ejecución Principal ---
+if __name__ == "__main__":
+    print("--- Inicializando Manejador y Analizador de Datos ---")
+    manejador = ManejadorDatosNYC()
+
+    df_taxis = manejador.cargar_datos()
+
+    if not df_taxis.empty:
+        print("\n--- Datos cargados exitosamente. Iniciando análisis interactivo. ---")
+        analizador = AnalizadorDatosNYC(df_taxis)
+        analizador.mostrar_menu()
+    else:
+        print("\n--- No se pudo continuar con el análisis debido a un error en la carga de datos. ---")
